@@ -642,6 +642,17 @@ Routes["/tabs/by-id/#TAB_ID/inputs/:INPUT_ID.txt"] = makeRouteWithContents(async
   await browser.tabs.executeScript(tabId, {code});
 });
 
+Routes["/windows/create"] = {
+  description: 'Create a new window.',
+  usage: 'echo "https://www.google.com" > $0',
+  async write({buf}) {
+    const urls = buf.trim().split("\n");
+    await browser.windows.create({url: urls});
+    return {size: stringToUtf8Array(buf).length};
+  },
+  async truncate() { return {}; }
+};
+
 Routes["/windows"] = {
   async readdir() {
     const windows = await browser.windows.getAll();
