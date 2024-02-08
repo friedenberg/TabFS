@@ -61,7 +61,7 @@ esac
 mkdir -p "$MANIFEST_LOCATION"
 
 APP_NAME="com.rsnous.tabfs"
-EXE_PATH=$(pwd)/fs/tabfs
+EXE_PATH=$(pwd)/go/chrome-json
 
 case "$BROWSER" in
     chrome | chromium | chromebeta | brave | vivaldi | edgedev | opera | arc)

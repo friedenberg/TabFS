@@ -482,6 +482,7 @@ a symbolic link to the folder /windows/[id for this window].`,
     return { buf: "../../../windows/" + tab.windowId };
   }
 };
+
 Routes["/tabs/by-id/#TAB_ID/control"] = {
   description: `Write control commands to this file to control this tab;
 see https://developer.chrome.com/extensions/tabs.`,
@@ -697,7 +698,14 @@ Routes["/windows/last-focused"] = {
   Routes["/windows/#WINDOW_ID/focused"] =
     withWindow(window => JSON.stringify(window.focused) + '\n',
                buf => ({ focused: buf.startsWith('true') }));
+
+  // Routes["/windows/#WINDOW_ID/title.txt"] = withWindow(window => {
+  //   return window.title;
+  // }, buf => {
+  //   return { title: buf };
+  // });
 })();
+
 Routes["/windows/#WINDOW_ID/visible-tab.png"] = { ...makeRouteWithContents(async ({windowId}) => {
   // screen capture is a window thing and not a tab thing because you
   // can only capture the visible tab for each window anyway; you
@@ -947,16 +955,29 @@ async function onMessage(req) {
 
   /* console.time(req.op + ':' + req.path);*/
   try {
-    const [route, vars] = tryMatchRoute(req.path);
-    response = await route[req.op]({...req, ...vars});
-    response.op = req.op;
-    if (response.buf) {
-      if (response.buf instanceof Uint8Array) {
-        response.buf = await utf8ArrayToBase64(response.buf);
-      } else {
-        response.buf = btoa(response.buf);
-      }
+    if (req.path ==  "/windows/create") {
+      await browser.windows.create({url: req.urls});
+      response = "ok";
     }
+
+    if (req.path ==  "/windows") {
+      const windows = await browser.windows.getAll();
+      response = await Promise.all(windows.map(async function(w) {
+        w["tabs"] = await browser.tabs.query({windowId: w["id"]});
+        return w;
+      }));
+    }
+
+    // const [route, vars] = tryMatchRoute(req.path);
+    // response = await route[req.op]({...req, ...vars});
+    // response.op = req.op;
+    // if (response.buf) {
+    //   if (response.buf instanceof Uint8Array) {
+    //     response.buf = await utf8ArrayToBase64(response.buf);
+    //   } else {
+    //     response.buf = btoa(response.buf);
+    //   }
+    // }
 
   } catch (e) {
     console.error(e);
@@ -977,38 +998,6 @@ async function onMessage(req) {
 };
 
 function tryConnect() {
-  // Safari is very weird -- it has this native app that we have to talk to,
-  // so we poke that app to wake it up, get it to start the TabFS process
-  // and boot a WebSocket, then connect to it.
-  // Is there a better way to do this?
-  if (chrome.runtime.getURL('/').startsWith('safari-web-extension://')) { // Safari-only
-    chrome.runtime.sendNativeMessage('com.rsnous.tabfs', {op: 'safari_did_connect'}, resp => {
-      console.log(resp);
-
-      let socket;
-      function connectSocket(checkAfterTime) {
-        socket = new WebSocket('ws://localhost:9991');
-        socket.addEventListener('message', event => {
-          onMessage(JSON.parse(event.data));
-        });
-
-        port = { postMessage(message) {
-          socket.send(JSON.stringify(message));
-        } };
-
-        setTimeout(() => {
-          if (socket.readyState === 1) {
-          } else {
-            console.log('ws connection failed, retrying in', checkAfterTime);
-            connectSocket(checkAfterTime * 2);
-          }
-        }, checkAfterTime);
-      }
-      connectSocket(200);
-    });
-    return;
-  }
-  
   port = chrome.runtime.connectNative('com.rsnous.tabfs');
   port.onMessage.addListener(onMessage);
   port.onDisconnect.addListener(p => {
