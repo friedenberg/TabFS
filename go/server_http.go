@@ -24,20 +24,6 @@ func NewRequest(in *http.Request, body JsonObject) (out Request) {
 func ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	enc := json.NewEncoder(w)
 
-	defer func() {
-		r := recover()
-
-		if r == nil {
-			return
-		}
-
-		w.WriteHeader(http.StatusInternalServerError)
-
-		enc.Encode(map[string]interface{}{"error": "internal server error"})
-
-		panic(r)
-	}()
-
 	dec := json.NewDecoder(req.Body)
 
 	w.Header().Set("Content-Type", "application/json")
@@ -74,11 +60,27 @@ func ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 	w.WriteHeader(int(res["status"].(float64)))
 
-	if b, ok := res["body"]; ok && len(b.(JsonObject)) > 0 {
-		err = enc.Encode(b)
+	b, ok := res["body"]
 
-		if err != nil {
-			panic(err)
+	if !ok {
+		return
+	}
+
+	switch bjo := b.(type) {
+	case JsonObject:
+		if len(bjo) == 0 {
+			return
 		}
+
+	case []JsonObject:
+		if len(bjo) == 0 {
+			return
+		}
+	}
+
+	err = enc.Encode(b)
+
+	if err != nil {
+		panic(err)
 	}
 }
