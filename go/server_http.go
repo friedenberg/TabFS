@@ -3,26 +3,44 @@ package main
 import (
 	"encoding/json"
 	"io"
-	"log"
-	"net"
 	"net/http"
 )
 
-type Server struct {
-	srv http.Server
+type (
+	JsonObject = map[string]interface{}
+	Request    JsonObject
+)
+
+func NewRequest(in *http.Request, body JsonObject) (out Request) {
+	out = map[string]interface{}{
+		"path":   in.URL.Path,
+		"method": in.Method,
+		"body":   body,
+	}
+
+	return
 }
 
-func (s *Server) Serve(listener *net.UnixListener) {
-	s.srv.Handler = s
-	s.srv.Serve(listener)
-}
+func ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	enc := json.NewEncoder(w)
 
-func (s *Server) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	log.Print("request: %s", req)
-	w.Header().Set("Content-Type", "application/json")
+	defer func() {
+		r := recover()
+
+		if r == nil {
+			return
+		}
+
+		w.WriteHeader(http.StatusInternalServerError)
+
+		enc.Encode(map[string]interface{}{"error": "internal server error"})
+
+		panic(r)
+	}()
 
 	dec := json.NewDecoder(req.Body)
-	enc := json.NewEncoder(w)
+
+	w.Header().Set("Content-Type", "application/json")
 
 	var err error
 
@@ -30,9 +48,15 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 	err = dec.Decode(&m.Content)
 
+	if err == io.EOF {
+		err = nil
+	}
+
 	if err != nil {
 		panic(err)
 	}
+
+	m.Content = NewRequest(req, m.Content)
 
 	_, err = m.WriteToChrome()
 
@@ -46,9 +70,15 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		panic(err)
 	}
 
-	err = enc.Encode(m.Content)
+	res := m.Content
 
-	if err != nil {
-		panic(err)
+	w.WriteHeader(int(res["status"].(float64)))
+
+	if b, ok := res["body"]; ok && len(b.(JsonObject)) > 0 {
+		err = enc.Encode(b)
+
+		if err != nil {
+			panic(err)
+		}
 	}
 }

@@ -9,7 +9,7 @@ import (
 
 type Message struct {
 	bytes.Buffer
-	Content interface{}
+	Content map[string]interface{}
 }
 
 func (m *Message) WriteToChrome() (n int64, err error) {
@@ -97,5 +97,5 @@ func (m *Message) ReadFromChrome() (n int64, err error) {
 }
 
 func (m *Message) ReadFrom(r io.Reader) (n int64, err error) {
-  return
+	return
 }
