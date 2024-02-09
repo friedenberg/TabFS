@@ -4,6 +4,23 @@
 // global so it can be hot-reloaded
 window.Routes = {};
 
+async function windowsWithTabs(windowOrWindowList) {
+  if (Array.isArray(windowOrWindowList)) {
+    const windows = windowOrWindowList;
+
+    return await Promise.all(
+      windows.map(async function (w) {
+        w["tabs"] = await browser.tabs.query({ windowId: w["id"] });
+        return w;
+      })
+    );
+  } else {
+    const w = windowOrWindowList;
+    w["tabs"] = await browser.tabs.query({ windowId: w["id"] });
+    return w;
+  }
+}
+
 Routes["/windows"] = {
   description: "Create a new window.",
   usage: 'echo "https://www.google.com" > $0',
@@ -17,12 +34,27 @@ Routes["/windows"] = {
     const windows = await browser.windows.getAll();
     return {
       status: 200,
-      body: await Promise.all(
-        windows.map(async function (w) {
-          w["tabs"] = await browser.tabs.query({ windowId: w["id"] });
-          return w;
-        })
-      ),
+      body: await windowsWithTabs(windows),
+    };
+  },
+};
+
+Routes["/windows/current"] = {
+  description: `A symbolic link to /windows/[id for the last focused window].`,
+  async get() {
+    return {
+      status: 200,
+      body: await windowsWithTabs(await browser.windows.getCurrent()),
+    };
+  },
+};
+
+Routes["/windows/last-focused"] = {
+  description: `A symbolic link to /windows/[id for the last focused window].`,
+  async get() {
+    return {
+      status: 200,
+      body: await windowsWithTabs(await browser.windows.getLastFocused()),
     };
   },
 };
@@ -31,13 +63,13 @@ Routes["/windows/#WINDOW_ID"] = {
   async get({ windowId }) {
     return {
       status: 200,
-      body: await browser.windows.get(windowId),
+      body: await windowsWithTabs(await browser.windows.get(windowId)),
     };
   },
   async put(req) {
     return {
       status: 200,
-      body: await browser.windows.update(req.vars),
+      body: await windowsWithTabs(await browser.windows.update(req.vars)),
     };
   },
   async delete({ windowId }) {
@@ -74,17 +106,6 @@ Routes["/windows/#WINDOW_ID/tabs/#TAB_ID"] = {
   },
 };
 
-Routes["/windows/last-focused"] = {
-  description: `A symbolic link to /windows/[id for the last focused window].`,
-  async get() {
-    return {
-      status: 200,
-      body: await browser.windows.getLastFocused(),
-    };
-  },
-};
-
-
 Routes["/extensions"] = {
   async readdir() {
     const infos = await browser.management.getAll();
@@ -97,7 +118,6 @@ Routes["/extensions"] = {
     };
   },
 };
-
 
 Routes["/runtime/reload"] = {
   async write({ buf }) {
@@ -726,132 +746,132 @@ Routes["/tabs/by-id"] = {
 //     ),
 //   };
 // })();
-function createWritableDirectory() {
-  // Returns a 'writable directory' object, which represents a
-  // writable directory that users can put arbitrary stuff into. It's
-  // not itself a route, but it has .routeForRoot and
-  // .routeForFilename properties that are routes.
+// function createWritableDirectory() {
+//   // Returns a 'writable directory' object, which represents a
+//   // writable directory that users can put arbitrary stuff into. It's
+//   // not itself a route, but it has .routeForRoot and
+//   // .routeForFilename properties that are routes.
 
-  const dir = {};
-  return {
-    directory: dir,
-    routeForRoot: {
-      async readdir({ path }) {
-        // get just last component of keys (filename)
-        return {
-          entries: [
-            ".",
-            "..",
-            ...Object.keys(dir).map((key) =>
-              key.substr(key.lastIndexOf("/") + 1)
-            ),
-          ],
-        };
-      },
-      getattr() {
-        return {
-          st_mode: unix.S_IFDIR | 0777, // writable so you can create/rm evals
-          st_nlink: 3,
-          st_size: 0,
-        };
-      },
-    },
-    routeForFilename: {
-      async mknod({ path, mode }) {
-        dir[path] = "";
-        return {};
-      },
-      async unlink({ path }) {
-        delete dir[path];
-        return {};
-      },
+//   const dir = {};
+//   return {
+//     directory: dir,
+//     routeForRoot: {
+//       async readdir({ path }) {
+//         // get just last component of keys (filename)
+//         return {
+//           entries: [
+//             ".",
+//             "..",
+//             ...Object.keys(dir).map((key) =>
+//               key.substr(key.lastIndexOf("/") + 1)
+//             ),
+//           ],
+//         };
+//       },
+//       getattr() {
+//         return {
+//           st_mode: unix.S_IFDIR | 0777, // writable so you can create/rm evals
+//           st_nlink: 3,
+//           st_size: 0,
+//         };
+//       },
+//     },
+//     routeForFilename: {
+//       async mknod({ path, mode }) {
+//         dir[path] = "";
+//         return {};
+//       },
+//       async unlink({ path }) {
+//         delete dir[path];
+//         return {};
+//       },
 
-      // ...makeRouteWithContents(
-      //   async ({ path }) => dir[path],
-      //   async ({ path }, buf) => {
-      //     dir[path] = buf;
-      //   }
-      // ),
-    },
-  };
-}
+//       // ...makeRouteWithContents(
+//       //   async ({ path }) => dir[path],
+//       //   async ({ path }, buf) => {
+//       //     dir[path] = buf;
+//       //   }
+//       // ),
+//     },
+//   };
+// }
 
-(function () {
-  const evals = createWritableDirectory();
-  Routes["/tabs/by-id/#TAB_ID/evals"] = {
-    ...evals.routeForRoot,
-    description: `Add JavaScript files to this folder to evaluate them in the tab.`,
-    usage: "ls $0",
-  };
-  Routes["/tabs/by-id/#TAB_ID/evals/:FILENAME"] = {
-    ...evals.routeForFilename,
-    // FIXME: use $0 here
-    // FIXME: document allFrames option
-    usage: [
-      'echo "2 + 2" > tabs/by-id/#TAB_ID/evals/twoplustwo.js',
-      "cat tabs/by-id/#TAB_ID/evals/twoplustwo.js.result",
-    ],
-    async write(req) {
-      const ret = await evals.routeForFilename.write(req);
-      const code = evals.directory[req.path];
-      const allFrames = req.path.endsWith(".all-frames.js");
-      // TODO: return other results beyond [0] (when all-frames is on)
-      const result = (
-        await browser.tabs.executeScript(req.tabId, { code, allFrames })
-      )[0];
-      evals.directory[req.path + ".result"] = JSON.stringify(result) + "\n";
-      return ret;
-    },
-  };
-})();
-(function () {
-  const watches = {};
-  Routes["/tabs/by-id/#TAB_ID/watches"] = {
-    description: `Put a file in this folder with a JS expression as its filename.
-Read that file to evaluate and return the current value of that JS expression.`,
-    usage: "ls $0",
-    async readdir({ tabId }) {
-      return { entries: [".", "..", ...Object.keys(watches[tabId] || [])] };
-    },
-    getattr() {
-      return {
-        st_mode: unix.S_IFDIR | 0777, // writable so you can create/rm watches
-        st_nlink: 3,
-        st_size: 0,
-      };
-    },
-  };
-  Routes["/tabs/by-id/#TAB_ID/watches/:EXPR"] = {
-    description: `A file with a JS expression :EXPR as its filename.`,
-    usage: `touch '/tabs/by-id/#TAB_ID/watches/2+2' && cat '/tabs/by-id/#TAB_ID/watches/2+2'`,
-    // NOTE: eval runs in extension's content script, not in original page JS context
-    async mknod({ tabId, expr, mode }) {
-      watches[tabId] = watches[tabId] || {};
-      watches[tabId][expr] = async function () {
-        return (await browser.tabs.executeScript(tabId, { code: expr }))[0];
-      };
-      return {};
-    },
-    async unlink({ tabId, expr }) {
-      delete watches[tabId][expr]; // TODO: also delete watches[tabId] if empty
-      return {};
-    },
+// (function () {
+//   const evals = createWritableDirectory();
+//   Routes["/tabs/by-id/#TAB_ID/evals"] = {
+//     ...evals.routeForRoot,
+//     description: `Add JavaScript files to this folder to evaluate them in the tab.`,
+//     usage: "ls $0",
+//   };
+//   Routes["/tabs/by-id/#TAB_ID/evals/:FILENAME"] = {
+//     ...evals.routeForFilename,
+//     // FIXME: use $0 here
+//     // FIXME: document allFrames option
+//     usage: [
+//       'echo "2 + 2" > tabs/by-id/#TAB_ID/evals/twoplustwo.js',
+//       "cat tabs/by-id/#TAB_ID/evals/twoplustwo.js.result",
+//     ],
+//     async write(req) {
+//       const ret = await evals.routeForFilename.write(req);
+//       const code = evals.directory[req.path];
+//       const allFrames = req.path.endsWith(".all-frames.js");
+//       // TODO: return other results beyond [0] (when all-frames is on)
+//       const result = (
+//         await browser.tabs.executeScript(req.tabId, { code, allFrames })
+//       )[0];
+//       evals.directory[req.path + ".result"] = JSON.stringify(result) + "\n";
+//       return ret;
+//     },
+//   };
+// })();
+// (function () {
+//   const watches = {};
+//   Routes["/tabs/by-id/#TAB_ID/watches"] = {
+//     description: `Put a file in this folder with a JS expression as its filename.
+// Read that file to evaluate and return the current value of that JS expression.`,
+//     usage: "ls $0",
+//     async readdir({ tabId }) {
+//       return { entries: [".", "..", ...Object.keys(watches[tabId] || [])] };
+//     },
+//     getattr() {
+//       return {
+//         st_mode: unix.S_IFDIR | 0777, // writable so you can create/rm watches
+//         st_nlink: 3,
+//         st_size: 0,
+//       };
+//     },
+//   };
+//   Routes["/tabs/by-id/#TAB_ID/watches/:EXPR"] = {
+//     description: `A file with a JS expression :EXPR as its filename.`,
+//     usage: `touch '/tabs/by-id/#TAB_ID/watches/2+2' && cat '/tabs/by-id/#TAB_ID/watches/2+2'`,
+//     // NOTE: eval runs in extension's content script, not in original page JS context
+//     async mknod({ tabId, expr, mode }) {
+//       watches[tabId] = watches[tabId] || {};
+//       watches[tabId][expr] = async function () {
+//         return (await browser.tabs.executeScript(tabId, { code: expr }))[0];
+//       };
+//       return {};
+//     },
+//     async unlink({ tabId, expr }) {
+//       delete watches[tabId][expr]; // TODO: also delete watches[tabId] if empty
+//       return {};
+//     },
 
-    // ...makeRouteWithContents(
-    //   async ({ tabId, expr }) => {
-    //     if (!watches[tabId] || !(expr in watches[tabId])) {
-    //       throw new UnixError(unix.ENOENT);
-    //     }
-    //     return JSON.stringify(await watches[tabId][expr]()) + "\n";
-    //   },
-    //   () => {
-    //     // setData handler -- only providing this so that getattr reports
-    //     // that the file is writable, so it can be deleted without annoying prompt.
-    //     throw new UnixError(unix.EPERM);
-    //   }
-    // ),
-  };
-})();
+//     // ...makeRouteWithContents(
+//     //   async ({ tabId, expr }) => {
+//     //     if (!watches[tabId] || !(expr in watches[tabId])) {
+//     //       throw new UnixError(unix.ENOENT);
+//     //     }
+//     //     return JSON.stringify(await watches[tabId][expr]()) + "\n";
+//     //   },
+//     //   () => {
+//     //     // setData handler -- only providing this so that getattr reports
+//     //     // that the file is writable, so it can be deleted without annoying prompt.
+//     //     throw new UnixError(unix.EPERM);
+//     //   }
+//     // ),
+//   };
+// })();
 
 Routes["/tabs/by-id/#TAB_ID/window"] = {
   description: `The window that this tab lives in;
@@ -862,25 +882,25 @@ a symbolic link to the folder /windows/[id for this window].`,
   },
 };
 
-Routes["/tabs/by-id/#TAB_ID/control"] = {
-  description: `Write control commands to this file to control this tab;
-see https://developer.chrome.com/extensions/tabs.`,
-  usage: [
-    "echo remove > $0",
-    "echo reload > $0",
-    "echo goForward > $0",
-    "echo goBack > $0",
-    "echo discard > $0",
-  ],
-  async write({ tabId, buf }) {
-    const command = buf.trim();
-    await browser.tabs[command](tabId);
-    return { size: stringToUtf8Array(buf).length };
-  },
-  async truncate({ size }) {
-    return {};
-  },
-};
+// Routes["/tabs/by-id/#TAB_ID/control"] = {
+//   description: `Write control commands to this file to control this tab;
+// see https://developer.chrome.com/extensions/tabs.`,
+//   usage: [
+//     "echo remove > $0",
+//     "echo reload > $0",
+//     "echo goForward > $0",
+//     "echo goBack > $0",
+//     "echo discard > $0",
+//   ],
+//   async write({ tabId, buf }) {
+//     const command = buf.trim();
+//     await browser.tabs[command](tabId);
+//     return { size: stringToUtf8Array(buf).length };
+//   },
+//   async truncate({ size }) {
+//     return {};
+//   },
+// };
 // debugger/ : debugger-API-dependent (Chrome-only)
 (function () {
   if (!chrome.debugger) return;
@@ -1066,16 +1086,16 @@ see https://developer.chrome.com/extensions/tabs.`,
   //   );
 })();
 
-Routes["/tabs/by-id/#TAB_ID/inputs"] = {
-  description: `Contains a file for each text input and textarea on this page (as long as it has an ID, currently).`,
-  async readdir({ tabId }) {
-    // TODO: assign new IDs to inputs without them?
-    const code = `Array.from(document.querySelectorAll('textarea, input[type=text]'))
-                    .map(e => e.id).filter(id => id)`;
-    const ids = (await browser.tabs.executeScript(tabId, { code }))[0];
-    return { entries: [".", "..", ...ids.map((id) => `${id}.txt`)] };
-  },
-};
+// Routes["/tabs/by-id/#TAB_ID/inputs"] = {
+//   description: `Contains a file for each text input and textarea on this page (as long as it has an ID, currently).`,
+//   async readdir({ tabId }) {
+//     // TODO: assign new IDs to inputs without them?
+//     const code = `Array.from(document.querySelectorAll('textarea, input[type=text]'))
+//                     .map(e => e.id).filter(id => id)`;
+//     const ids = (await browser.tabs.executeScript(tabId, { code }))[0];
+//     return { entries: [".", "..", ...ids.map((id) => `${id}.txt`)] };
+//   },
+// };
 
 // Routes["/tabs/by-id/#TAB_ID/inputs/:INPUT_ID.txt"] = makeRouteWithContents(
 //   async ({ tabId, inputId }) => {
@@ -1266,4 +1286,3 @@ Routes["/tabs/by-id/#TAB_ID/inputs"] = {
 // `
 //   );
 // });
-
